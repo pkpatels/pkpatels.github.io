@@ -1,0 +1,142 @@
+name: Sync
+description: ''
+host: EXCEL
+api_set: {}
+script:
+  content: |
+    $("#run").click(() => tryCatch(run));
+
+    async function run() {
+      await Excel.run(async (context) => {
+        const sheet5 = context.workbook.worksheets.getItem("Sheet5");
+        const sheet1 = context.workbook.worksheets.getItem("Sheet1");
+        // Precedents are cells referenced by the formula in a cell.
+        let range = sheet5.getRange("A1");
+        let precedents = range.getPrecedents();
+        range.load("address");
+        precedents.areas.load("address");
+        await context.sync();
+
+        console.log(`Precedent cells of ${range.address}:`);
+
+        const list: Excel.RangeAreas[] = [];
+        for (let item of precedents.areas.items) {
+          console.log(`  ${item.address}`);
+          let range = item.getSpecialCellsOrNullObject(Excel.SpecialCellType.constants, Excel.SpecialCellValueType.numbers);
+
+          if (range === null) {
+            continue;
+          }
+
+          range.load("address")
+          range.areas.load(["address", "values", "rowIndex", "columnIndex"]);
+          list.push(range);
+
+          range.untrack();
+        }
+
+        await context.sync();
+
+        console.log(`Driver cells of ${range.address}:`);
+
+        const drivers: Excel.Range[] = [];
+        for (let range of list) {
+          if (!range.areas.items) {
+            continue;
+          }
+
+          for (let item of range.areas.items) {
+            console.log(`${item.address}`);
+            drivers.push(item);
+            item.untrack();
+          }
+        }
+
+        await context.sync();
+
+        let negChanges = [];
+        let posChanges = [];
+
+        context.workbook.application.suspendScreenUpdatingUntilNextSync();
+
+        for (let range of drivers) {
+          console.log(`rowIndex: ${range.rowIndex}`);
+          console.log(`colIndex: ${range.columnIndex}`);
+          
+          for (let r = 0; r < range.values.length; r++) {
+            let row = range.rowIndex + r;
+
+            for (let c = 0; c < range.values[r].length; c++) {
+              let col = range.columnIndex + c;
+              let value = range.values[r][c];
+              
+              /** buffer changes on sheet5!A1 by changing value -10% */
+              sheet1.getCell(row, col).formulas = [[value * 1.1]];
+              let negRange = sheet5.getRange("A1");
+              negRange.load("values");
+              negChanges.push(negRange);
+              negRange.untrack();
+
+              /** buffer changes on sheet5!A1 by changing value +10% */
+              sheet1.getCell(row, col).formulas = [[value * 1.1]];
+              let posRange = sheet5.getRange("A1");
+              posRange.load("values");
+              posChanges.push(posRange);
+              posRange.untrack();
+
+              /** Restore original value */
+              sheet1.getCell(row, col).formulas = [[value]];
+            }
+          }
+        }
+
+        await context.sync();
+
+        for (let range of negChanges) {
+          console.log(range.value);
+        }
+
+        for (let range of posChanges) {
+          console.log(range.value);
+        }
+      });
+    }
+
+    /** Default helper for invoking an action and handling errors. */
+    async function tryCatch(callback) {
+      try {
+        await callback();
+      } catch (error) {
+        // Note: In a production add-in, you'd want to notify the user through your add-in's UI.
+        console.error(error);
+      }
+    }
+  language: typescript
+template:
+  content: "<section class=\"setup ms-font-m\">\n\t<button id=\"run\" class=\"ms-Button\"> <span class=\"ms-Button-label\">Run</span> </button>\n</section>"
+  language: html
+style:
+  content: |
+    section.samples {
+        margin-top: 20px;
+    }
+
+    section.samples .ms-Button, section.setup .ms-Button {
+        display: block;
+        margin-bottom: 5px;
+        margin-left: 20px;
+        min-width: 80px;
+    }
+  language: css
+libraries: |
+  https://appsforoffice.microsoft.com/lib/beta/hosted/office.js
+  @types/office-js-preview
+
+  office-ui-fabric-js@1.4.0/dist/css/fabric.min.css
+  office-ui-fabric-js@1.4.0/dist/css/fabric.components.min.css
+
+  core-js@2.4.1/client/core.min.js
+  @types/core-js
+
+  jquery@3.1.1
+  @types/jquery@3.3.1
